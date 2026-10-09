@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-rbac-service
+  namespace: sdlc-platform
+  labels:
+    app: auth-rbac-service
+    tier: core
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: auth-rbac-service
+  template:
+    metadata:
+      labels:
+        app: auth-rbac-service
+        tier: core
+    spec:
+      containers:
+        - name: auth-rbac-service
+          image: sdlc-platform/auth-rbac-service:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: platform-config
+            - secretRef:
+                name: platform-secrets
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-rbac-service
+  namespace: sdlc-platform
+spec:
+  selector:
+    app: auth-rbac-service
+  ports:
+    - port: 80
+      targetPort: 8000

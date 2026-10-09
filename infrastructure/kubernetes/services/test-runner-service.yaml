@@ -1,0 +1,78 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-runner-service
+  namespace: sdlc-platform
+  labels:
+    app: test-runner-service
+    tier: ai
+spec:
+  # Una sola replica: la working copy del repository bersaglio è condivisa e le
+  # esecuzioni sono serializzate. Scalare richiederebbe una copia per esecuzione.
+  replicas: 1
+  selector:
+    matchLabels:
+      app: test-runner-service
+  template:
+    metadata:
+      labels:
+        app: test-runner-service
+        tier: ai
+    spec:
+      containers:
+        - name: test-runner-service
+          image: sdlc-platform/test-runner-service:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: platform-config
+            - secretRef:
+                name: platform-secrets
+          volumeMounts:
+            - name: test-workspace
+              mountPath: /testspace
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            # Limiti più alti degli altri servizi: qui girano l'installazione
+            # delle dipendenze e la suite di test del repository bersaglio.
+            limits:
+              cpu: "2"
+              memory: 4Gi
+      volumes:
+        - name: test-workspace
+          persistentVolumeClaim:
+            claimName: test-workspace
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: test-workspace
+  namespace: sdlc-platform
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: test-runner-service
+  namespace: sdlc-platform
+spec:
+  selector:
+    app: test-runner-service
+  ports:
+    - port: 80
+      targetPort: 8000

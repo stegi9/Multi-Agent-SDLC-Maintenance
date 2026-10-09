@@ -1,0 +1,72 @@
+/* ============================================================
+   Design system della piattaforma SDLC (token globali)
+   Derivato dal mock-up "AgenticSDLC — AI Operations".
+   ============================================================ */
+:root {
+  /* superfici e testo */
+  --bg: #f8fafc;
+  --surface: #ffffff;
+  --surface-alt: #eff4ff;
+  --surface-2: #f1f5f9;
+  --border: #e2e8f0;
+  --border-strong: #cbd5e1;
+  --text: #0b1c30;
+  --text-muted: #64748b;
+
+  /* navigazione (sidebar navy) */
+  --sidebar: #0f172a;
+  --sidebar-elev: #131b2e;
+  --sidebar-text: #94a3b8;
+  --sidebar-text-strong: #e2e8f0;
+  --sidebar-active: #1e293b;
+
+  /* azioni */
+  --primary: #131b2e;          /* azioni standard (navy) */
+  --primary-hover: #243047;
+  --primary-contrast: #ffffff;
+  --ai: #4f46e5;               /* azioni AI (indigo) */
+  --ai-hover: #4338ca;
+  --ai-soft: #eef2ff;
+
+  /* stati semantici */
+  --ok: #047857;     --ok-soft: #ecfdf5;     /* validato / completato */
+  --warn: #b45309;   --warn-soft: #fffbeb;   /* in corso / attesa */
+  --err: #be123c;    --err-soft: #fff1f2;    /* fallito / errore */
+  --info: #1d4ed8;   --info-soft: #eff6ff;   /* in esecuzione */
+
+  /* forma e tipografia */
+  --radius-sm: 4px;
+  --radius: 8px;
+  --radius-lg: 12px;
+  --font: 'Inter', 'Segoe UI', Roboto, system-ui, sans-serif;
+  --mono: 'JetBrains Mono', Consolas, 'Courier New', monospace;
+  --shadow-1: 0 1px 2px rgb(15 23 42 / 6%), 0 1px 3px rgb(15 23 42 / 4%);
+  --shadow-2: 0 12px 32px rgb(15 23 42 / 18%);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* icone Material Symbols */
+.mi {
+  font-family: 'Material Symbols Outlined';
+  font-weight: normal;
+  font-style: normal;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  display: inline-block;
+  white-space: nowrap;
+  direction: ltr;
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+  user-select: none;
+}

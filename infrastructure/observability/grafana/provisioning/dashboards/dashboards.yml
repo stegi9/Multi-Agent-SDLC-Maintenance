@@ -1,0 +1,12 @@
+# Provider che carica le dashboard JSON dalla cartella provisioning.
+apiVersion: 1
+
+providers:
+  - name: SDLC
+    orgId: 1
+    folder: SDLC
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /etc/grafana/provisioning/dashboards

@@ -1,0 +1,402 @@
+{
+  "id": "cloud-coding-agent",
+  "name": "Agente di Coding (Ollama locale)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "cloud-coding-agent",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "wh-cloud-agent-0001",
+      "name": "Webhook handoff",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "cloud-coding-agent"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const b = $input.first().json.body || $input.first().json;\nconst repo = b.repository || {};\nconst m = String(repo.repo_url || '').match(/github\\.com[/:]+([^/]+)\\/([^/]+?)(?:\\.git)?\\/?$/);\nif (!m) { throw new Error('repo_url non valido o mancante: ' + repo.repo_url); }\nconst cc = b.code_changes || {};\nconst changes = (cc.changes || []).map(c =>\n  `FILE: ${c.file}\\nAZIONE: ${c.action}\\nTIPO: ${c.kind || 'source'}\\nDESCRIZIONE: ${c.description || ''}\\nBOZZA:\\n${c.code_sketch || ''}`\n).join('\\n\\n');\n// Requisiti di test dell'Agente Sviluppatore: senza questo blocco l'agente\n// scriverebbe solo codice di produzione e l'Agente Tester non avrebbe nulla\n// di nuovo da eseguire.\nconst tr = b.test_requirements || {};\nconst testBlock = tr.mandatory\n  ? `\\nTEST OBBLIGATORI:\\nStrategia: ${tr.strategy || '-'}\\nFile di test attesi: ${(tr.files || []).join(', ') || '(scegli tu il percorso, seguendo la convenzione del repository)'}\\nConvenzione del repository: ${tr.convention_hint || '-'}\\nDevi produrre ANCHE il contenuto completo dei file di test.\\n`\n  : '';\nconst tickets = (b.tickets || []).map(t => `- ${t.title}: ${t.description || ''}`).join('\\n');\nconst prompt =\n`Sei un agente di coding esperto. Devi implementare un Work Order producendo il CONTENUTO COMPLETO dei file.\nISTRUZIONI DELLO SCRUM MASTER: ${b.instructions || '-'}\nTICKET:\n${tickets}\nMODIFICHE PROPOSTE (bozze da completare, non limitarti a copiarle):\n${changes}\nSintesi: ${cc.summary || ''}\n${testBlock}\nRispondi SOLO con JSON valido nella forma:\n{\"files\":[{\"path\":\"percorso/relativo/al/repo\",\"content\":\"CONTENUTO COMPLETO del file\"}]}\nIncludi solo i file da creare o modificare. Nessun testo fuori dal JSON.`;\nconst ollamaBody = {\n  model: 'qwen2.5:7b',\n  prompt: prompt,\n  format: 'json',\n  stream: false,\n  options: { temperature: 0.2 }\n};\nreturn [{ json: { wo_id: b.wo_id, owner: m[1], repo: m[2], base_branch: repo.base_branch || 'main', work_branch: repo.work_branch, ollamaBody } }];"
+      },
+      "id": "code-prepara-0002",
+      "name": "Prepara handoff",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:11434/api/generate",
+        "options": {
+          "timeout": 300000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.ollamaBody }}"
+      },
+      "id": "http-ollama-0003",
+      "name": "Genera codice (Ollama)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const meta = $('Prepara handoff').first().json;\nconst text = $input.first().json.response || '{}';\nlet parsed;\ntry { parsed = JSON.parse(text); }\ncatch (e) { parsed = JSON.parse(text.replace(/^```json/i, '').replace(/```$/, '').trim()); }\nconst files = (parsed.files || []).filter(f => f && f.path).map(f => ({\n  path: f.path,\n  contentB64: Buffer.from(String(f.content || ''), 'utf8').toString('base64')\n}));\nif (!files.length) { throw new Error('Il modello non ha prodotto file'); }\nreturn [{ json: { owner: meta.owner, repo: meta.repo, base_branch: meta.base_branch, work_branch: meta.work_branch, files } }];"
+      },
+      "id": "code-estrai-0004",
+      "name": "Estrai file dal modello",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $json.owner }}/{{ $json.repo }}/git/ref/heads/{{ $json.base_branch }}",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.GITHUB_TOKEN}}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            },
+            {
+              "name": "X-GitHub-Api-Version",
+              "value": "2022-11-28"
+            }
+          ]
+        }
+      },
+      "id": "http-shabase-0005",
+      "name": "SHA base branch",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.github.com/repos/{{ $('Estrai file dal modello').item.json.owner }}/{{ $('Estrai file dal modello').item.json.repo }}/git/refs",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.GITHUB_TOKEN}}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            },
+            {
+              "name": "X-GitHub-Api-Version",
+              "value": "2022-11-28"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"ref\": \"refs/heads/\" + $('Estrai file dal modello').item.json.work_branch, \"sha\": $json.object.sha } }}"
+      },
+      "id": "http-crea-0006",
+      "name": "Crea work branch",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        0
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const d = $('Estrai file dal modello').first().json;\nreturn d.files.map(f => ({ json: {\n  owner: d.owner, repo: d.repo, work_branch: d.work_branch, path: f.path, contentB64: f.contentB64\n}}));"
+      },
+      "id": "code-esplodi-0007",
+      "name": "Esplodi file",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $json.owner }}/{{ $json.repo }}/contents/{{ $json.path }}?ref={{ $json.work_branch }}",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.GITHUB_TOKEN}}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            },
+            {
+              "name": "X-GitHub-Api-Version",
+              "value": "2022-11-28"
+            }
+          ]
+        }
+      },
+      "id": "http-shafile-0008",
+      "name": "SHA file esistente",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1540,
+        0
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const meta = $('Esplodi file').item.json;\nconst prev = $input.item.json || {};\nconst body = { message: 'feat(wo): ' + meta.path, content: meta.contentB64, branch: meta.work_branch };\nif (prev && prev.sha) { body.sha = prev.sha; }  // file gia' esistente sul branch -> update\nreturn { json: { owner: meta.owner, repo: meta.repo, path: meta.path, commitBody: body } };"
+      },
+      "id": "code-commit-0009",
+      "name": "Prepara commit",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://api.github.com/repos/{{ $json.owner }}/{{ $json.repo }}/contents/{{ $json.path }}",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.GITHUB_TOKEN}}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            },
+            {
+              "name": "X-GitHub-Api-Version",
+              "value": "2022-11-28"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.commitBody }}"
+      },
+      "id": "http-commit-0010",
+      "name": "Commit file",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1980,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return [{ json: { wo_id: $('Prepara handoff').first().json.wo_id } }];"
+      },
+      "id": "code-raccogli-0011",
+      "name": "Raccogli esito",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ingestion-sync-service:8000/api/v1/workorders/code-pushed",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Internal-Api-Key",
+              "value": "={{$env.INTERNAL_API_KEY}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"wo_id\": $json.wo_id } }}"
+      },
+      "id": "http-callback-0012",
+      "name": "Notifica piattaforma (apri PR)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2420,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook handoff": {
+      "main": [
+        [
+          {
+            "node": "Prepara handoff",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepara handoff": {
+      "main": [
+        [
+          {
+            "node": "Genera codice (Ollama)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Genera codice (Ollama)": {
+      "main": [
+        [
+          {
+            "node": "Estrai file dal modello",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Estrai file dal modello": {
+      "main": [
+        [
+          {
+            "node": "SHA base branch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SHA base branch": {
+      "main": [
+        [
+          {
+            "node": "Crea work branch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Crea work branch": {
+      "main": [
+        [
+          {
+            "node": "Esplodi file",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Esplodi file": {
+      "main": [
+        [
+          {
+            "node": "SHA file esistente",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SHA file esistente": {
+      "main": [
+        [
+          {
+            "node": "Prepara commit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepara commit": {
+      "main": [
+        [
+          {
+            "node": "Commit file",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Commit file": {
+      "main": [
+        [
+          {
+            "node": "Raccogli esito",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Raccogli esito": {
+      "main": [
+        [
+          {
+            "node": "Notifica piattaforma (apri PR)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

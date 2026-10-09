@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ingestion-sync-service
+  namespace: sdlc-platform
+  labels:
+    app: ingestion-sync-service
+    tier: core
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ingestion-sync-service
+  template:
+    metadata:
+      labels:
+        app: ingestion-sync-service
+        tier: core
+    spec:
+      containers:
+        - name: ingestion-sync-service
+          image: sdlc-platform/ingestion-sync-service:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: platform-config
+            - secretRef:
+                name: platform-secrets
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ingestion-sync-service
+  namespace: sdlc-platform
+spec:
+  selector:
+    app: ingestion-sync-service
+  ports:
+    - port: 80
+      targetPort: 8000

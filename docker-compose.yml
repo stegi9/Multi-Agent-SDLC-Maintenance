@@ -1,0 +1,395 @@
+# Piattaforma SDLC agentica - ambiente di sviluppo locale
+#
+# Avvio:        docker compose up -d --build
+# Frontend:     http://localhost:4200
+# Swagger UI:   http://localhost:8001/docs ... http://localhost:8010/docs
+
+x-service-env: &service-env
+  KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+  MYSQL_HOST: mysql
+  MYSQL_PORT: "3306"
+  MYSQL_USER: sdlc
+  MYSQL_PASSWORD: ${MYSQL_PASSWORD:-sdlc}
+  MYSQL_DATABASE: sdlc_platform
+  QDRANT_URL: http://qdrant:6333
+  LLM_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+  LLM_MODEL: ${LLM_MODEL:-qwen2.5:3b}
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+  # Enforcement RBAC backend: stesso segreto dell'auth-rbac-service per verificare i JWT
+  JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+  # Chiave per le chiamate machine-to-machine (n8n, servizio->servizio): header X-Internal-Api-Key
+  INTERNAL_API_KEY: ${INTERNAL_API_KEY:-dev-internal-key}
+  # Provider LLM: dedotto dal nome del modello (claude-* -> anthropic), o forzato qui
+  LLM_PROVIDER: ${LLM_PROVIDER:-}
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  ANTHROPIC_EFFORT: ${ANTHROPIC_EFFORT:-medium}
+  # Telemetria delle invocazioni LLM (token, latenza, esito), scritta in ./data/telemetry
+  TELEMETRY_PATH: /telemetry/llm_calls.jsonl
+  TELEMETRY_ENABLED: ${TELEMETRY_ENABLED:-true}
+  # Interruttori dei singoli meccanismi dell'Agente Sviluppatore (tutti attivi di default)
+  STRUCTURED_OUTPUT: ${STRUCTURED_OUTPUT:-true}
+  VERIFIER_ENABLED: ${VERIFIER_ENABLED:-true}
+  SEMANTIC_SEARCH: ${SEMANTIC_SEARCH:-true}
+  GRAPH_CONTEXT: ${GRAPH_CONTEXT:-true}
+  # Percorso deterministico per i ticket di vulnerabilità (dal manifesto ai
+  # punti di chiamata) e query canonica del ticket al posto del testo grezzo.
+  CVE_REACHABILITY: ${CVE_REACHABILITY:-true}
+  TICKET_NORMALIZATION: ${TICKET_NORMALIZATION:-true}
+  # Pianificazione dei test da parte dell'Agente Sviluppatore.
+  TEST_PLANNING: ${TEST_PLANNING:-true}
+  # Fascia decisionale calcolata sul grafo invece che sulla stima dell'LLM.
+  STRUCTURAL_IMPACT: ${STRUCTURAL_IMPACT:-true}
+
+x-service-defaults: &service-defaults
+  restart: unless-stopped
+  volumes:
+    - ./data/telemetry:/telemetry
+  depends_on:
+    mysql:
+      condition: service_healthy
+    kafka:
+      condition: service_healthy
+
+services:
+  # =========================================================================
+  # Infrastruttura
+  # =========================================================================
+  mysql:
+    image: mysql:8.4
+    container_name: sdlc-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
+      MYSQL_DATABASE: sdlc_platform
+      MYSQL_USER: sdlc
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-sdlc}
+    ports:
+      - "3307:3306"   # 3307 sull'host: la 3306 è occupata dal MySQL nativo di Windows
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./infrastructure/mysql/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${MYSQL_ROOT_PASSWORD:-root}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  kafka:
+    image: apache/kafka:3.8.0
+    container_name: sdlc-kafka
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093,PLAINTEXT_HOST://:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+    ports:
+      - "29092:29092"   # accesso da host (localhost:29092)
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+
+  kafka-init:
+    image: apache/kafka:3.8.0
+    container_name: sdlc-kafka-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+    volumes:
+      - ./infrastructure/kafka/create-topics.sh:/create-topics.sh:ro
+    entrypoint: ["/bin/bash", "/create-topics.sh"]
+    restart: "no"
+
+  qdrant:
+    image: qdrant/qdrant:v1.12.4
+    container_name: sdlc-qdrant
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant-data:/qdrant/storage
+    restart: unless-stopped
+
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: sdlc-n8n
+    ports:
+      - "5678:5678"
+    environment:
+      N8N_SECURE_COOKIE: "false"
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_RUNNERS_ENABLED: "true"
+      # Consente al workflow di leggere i segreti da {{$env.*}} (GEMINI/GITHUB token)
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
+      GENERIC_TIMEZONE: Europe/Rome
+      TZ: Europe/Rome
+      # Segreti usati dal workflow "Agente di Coding" via {{$env.*}}.
+      # Non finiscono nel JSON del workflow: restano solo nell'ambiente del container.
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      # Per la callback che apre la PR sulla piattaforma (X-Internal-Api-Key)
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-dev-internal-key}
+    volumes:
+      - n8n-data:/home/node/.n8n
+      - ./infrastructure/n8n/workflows:/workflows:ro
+    restart: unless-stopped
+
+  # =========================================================================
+  # Microservizi Core
+  # =========================================================================
+  auth-rbac-service:
+    <<: *service-defaults
+    build:
+      context: .
+      dockerfile: services/core/auth-rbac-service/Dockerfile
+    environment:
+      <<: *service-env
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+    ports:
+      - "8001:8000"
+
+  ingestion-sync-service:
+    <<: *service-defaults
+    build:
+      context: .
+      dockerfile: services/core/ingestion-sync-service/Dockerfile
+    environment:
+      <<: *service-env
+      JIRA_BASE_URL: ${JIRA_BASE_URL:-}
+      JIRA_EMAIL: ${JIRA_EMAIL:-}
+      JIRA_API: ${JIRA_API:-}
+      JIRA_PROJECT_KEY: ${JIRA_PROJECT_KEY:-}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      # Chiave per cifrare i token Git per-repository a riposo (impostala in produzione)
+      SETTINGS_ENC_KEY: ${SETTINGS_ENC_KEY:-}
+    ports:
+      - "8002:8000"
+
+  rag-db-manager:
+    <<: *service-defaults
+    build:
+      context: .
+      dockerfile: services/core/rag-db-manager/Dockerfile
+    environment:
+      <<: *service-env
+    depends_on:
+      mysql:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+    ports:
+      - "8003:8000"
+
+  # =========================================================================
+  # Microservizi AI
+  # =========================================================================
+  document-validator-service:
+    <<: *service-defaults
+    build:
+      context: .
+      dockerfile: services/ai/document-validator-service/Dockerfile
+    environment:
+      <<: *service-env
+    ports:
+      - "8004:8000"
+
+  evaluation-service:
+    <<: *service-defaults
+    build:
+      context: .
+      dockerfile: services/ai/evaluation-service/Dockerfile
+    environment:
+      <<: *service-env
+    ports:
+      - "8005:8000"
+
+  impact-analysis-service:
+    <<: *service-defaults
+    build:
+      context: .
+      dockerfile: services/ai/impact-analysis-service/Dockerfile
+    environment:
+      <<: *service-env
+    ports:
+      - "8006:8000"
+
+  topology-service:
+    <<: *service-defaults
+    build:
+      context: .
+      dockerfile: services/ai/topology-service/Dockerfile
+    environment:
+      <<: *service-env
+      TARGET_REPO_PATH: /workspace/repo
+    volumes:
+      # Monta la cartella PADRE del clone: così persistono sia il repository
+      # (/workspace/repo) sia gli artefatti topology.json e code_graph.json (/workspace),
+      # che altrimenti verrebbero persi al riavvio del container.
+      - target-repo:/workspace
+      - ./data/telemetry:/telemetry
+    ports:
+      - "8007:8000"
+
+  wo-generator-service:
+    <<: *service-defaults
+    build:
+      context: .
+      dockerfile: services/ai/wo-generator-service/Dockerfile
+    environment:
+      <<: *service-env
+    ports:
+      - "8008:8000"
+
+  coding-service:
+    <<: *service-defaults
+    build:
+      context: .
+      dockerfile: services/ai/coding-service/Dockerfile
+    environment:
+      <<: *service-env
+      TARGET_REPO_PATH: /workspace/repo
+      # Webhook dell'agente cloud esterno che scrive il codice e pusha su wo/<id>.
+      # Vuoto = handoff pronto in piattaforma ma non inviato (nessuna PR verrà aperta).
+      CLOUD_AGENT_URL: ${CLOUD_AGENT_URL:-}
+    volumes:
+      # Monta la cartella PADRE del clone: così persistono sia il repository
+      # (/workspace/repo) sia gli artefatti topology.json e code_graph.json (/workspace),
+      # che altrimenti verrebbero persi al riavvio del container.
+      - target-repo:/workspace
+      - ./data/telemetry:/telemetry
+    # Nessuna porta host fissa: il servizio è guidato da Kafka e raggiunto via
+    # rete interna (nginx /coding/ + DNS Docker). Così è scalabile in parallelo:
+    #   docker compose up -d --scale coding-service=3
+    # Ogni replica consuma Work Order distinti dallo stesso consumer group.
+    expose:
+      - "8000"
+
+  # PostgreSQL effimero per la suite di test del repository bersaglio.
+  # Stessa immagine dichiarata dal repository bersaglio stesso. I dati stanno in
+  # tmpfs: veloci, e ogni riavvio riparte pulito. L'isolamento fra esecuzioni è
+  # garantito da un database dedicato per run, creato ed eliminato dal servizio.
+  # Nessuna porta pubblicata sull'host: qui dentro gira codice scritto da un agente.
+  test-postgres:
+    image: postgres:16-alpine
+    container_name: sdlc-test-postgres
+    environment:
+      POSTGRES_USER: ${TEST_PG_USER:-magazzino}
+      POSTGRES_PASSWORD: ${TEST_PG_PASSWORD:-magazzino}
+      POSTGRES_DB: postgres
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${TEST_PG_USER:-magazzino} -d postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  # Agente Tester: esegue davvero la suite del repository bersaglio sul branch di
+  # lavoro del Work Order. È l'unico servizio con un runtime Node oltre a Python.
+  test-runner-service:
+    <<: *service-defaults
+    build:
+      context: .
+      dockerfile: services/ai/test-runner-service/Dockerfile
+    environment:
+      <<: *service-env
+      TEST_WORKSPACE_PATH: /testspace
+      TEST_PG_HOST: test-postgres
+      TEST_PG_PORT: "5432"
+      TEST_PG_USER: ${TEST_PG_USER:-magazzino}
+      TEST_PG_PASSWORD: ${TEST_PG_PASSWORD:-magazzino}
+      TEST_PACKAGE_PATH: ${TEST_PACKAGE_PATH:-artifacts/api-server}
+      TEST_DB_PACKAGE_PATH: ${TEST_DB_PACKAGE_PATH:-lib/db}
+      AUTO_RUN_ON_CODE_GENERATED: ${AUTO_RUN_ON_CODE_GENERATED:-false}
+    volumes:
+      # Area di lavoro DEDICATA. Il volume target-repo NON va montato: ci lavorano
+      # Mappatore e Sviluppatore sul branch principale, e un checkout del branch di
+      # lavoro là dentro falserebbe la selezione del contesto dell'Agente Sviluppatore.
+      - test-workspace:/testspace
+      - ./data/telemetry:/telemetry
+    depends_on:
+      mysql:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      test-postgres:
+        condition: service_healthy
+    ports:
+      - "8011:8000"
+
+  documentation-service:
+    <<: *service-defaults
+    build:
+      context: .
+      dockerfile: services/ai/documentation-service/Dockerfile
+    environment:
+      <<: *service-env
+    ports:
+      - "8010:8000"
+
+  # =========================================================================
+  # Frontend
+  # =========================================================================
+  frontend:
+    build:
+      context: ./frontend
+    container_name: sdlc-frontend
+    ports:
+      - "4200:80"
+    depends_on:
+      - auth-rbac-service
+    restart: unless-stopped
+
+  # =========================================================================
+  # Osservabilità (metriche applicative + dashboard)
+  # =========================================================================
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: sdlc-prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=7d
+    volumes:
+      - ./infrastructure/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.2.2
+    container_name: sdlc-grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./infrastructure/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+volumes:
+  mysql-data:
+  kafka-data:
+  qdrant-data:
+  n8n-data:
+  target-repo:   # clone del repository software su cui operano Topology e Coding
+  test-workspace:  # area di lavoro dell'Agente Tester (clone + cache delle dipendenze)
+  prometheus-data:
+  grafana-data:

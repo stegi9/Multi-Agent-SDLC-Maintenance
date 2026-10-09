@@ -1,0 +1,73 @@
+# CI della piattaforma: test della libreria condivisa, di ogni microservizio
+# e build del frontend Angular. Eseguita a ogni push e pull request.
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+
+jobs:
+  shared:
+    name: Test libreria condivisa (shared/)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Installa le dipendenze
+        run: pip install fastapi httpx aiokafka "python-jose[cryptography]" pydantic pytest anyio
+      - name: Esegui i test
+        run: python -m pytest shared/tests -q
+
+  services:
+    name: Test ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - services/core/auth-rbac-service
+          - services/core/ingestion-sync-service
+          - services/core/rag-db-manager
+          - services/ai/document-validator-service
+          - services/ai/evaluation-service
+          - services/ai/impact-analysis-service
+          - services/ai/topology-service
+          - services/ai/wo-generator-service
+          - services/ai/coding-service
+          - services/ai/test-runner-service
+          - services/ai/documentation-service
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: ${{ matrix.service }}/requirements.txt
+      - name: Installa le dipendenze del servizio
+        run: |
+          pip install -r "${{ matrix.service }}/requirements.txt"
+          pip install pytest anyio
+      - name: Esegui i test
+        working-directory: ${{ matrix.service }}
+        env:
+          PYTHONPATH: ${{ github.workspace }}:.
+        run: python -m pytest tests -q
+
+  frontend:
+    name: Build frontend Angular
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Installa le dipendenze
+        working-directory: frontend
+        run: npm install
+      - name: Build di produzione
+        working-directory: frontend
+        run: npm run build

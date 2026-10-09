@@ -1,0 +1,13 @@
+# Il build context dei microservizi è la root del repository:
+# escludere tutto ciò che non serve alle immagini.
+.git
+.venv
+venv
+.vscode
+frontend/node_modules
+frontend/dist
+frontend/.angular
+**/__pycache__
+**/.pytest_cache
+.env
+data

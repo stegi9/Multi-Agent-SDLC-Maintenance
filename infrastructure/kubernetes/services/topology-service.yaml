@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: topology-service
+  namespace: sdlc-platform
+  labels:
+    app: topology-service
+    tier: ai
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: topology-service
+  template:
+    metadata:
+      labels:
+        app: topology-service
+        tier: ai
+    spec:
+      containers:
+        - name: topology-service
+          image: sdlc-platform/topology-service:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: platform-config
+            - secretRef:
+                name: platform-secrets
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: topology-service
+  namespace: sdlc-platform
+spec:
+  selector:
+    app: topology-service
+  ports:
+    - port: 80
+      targetPort: 8000

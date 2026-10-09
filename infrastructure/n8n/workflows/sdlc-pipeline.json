@@ -1,0 +1,113 @@
+{
+  "id": "sdlc-pipeline-001",
+  "name": "SDLC — Pipeline agentica giornaliera",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "triggerAtHour": 7,
+              "triggerAtMinute": 0
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger-0001",
+      "name": "Ogni giorno alle 07:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://topology-service:8000/api/v1/scan",
+        "options": {}
+      },
+      "id": "http-topology-0002",
+      "name": "Agente Mappatore — aggiorna topologia",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [220, 0],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ingestion-sync-service:8000/api/v1/import/run",
+        "options": {}
+      },
+      "id": "http-import-0003",
+      "name": "Importa ticket (aging zero)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [440, 0],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://evaluation-service:8000/api/v1/evaluate/run",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "id": "http-evaluate-0004",
+      "name": "Agente Valutatore — triage",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, 0]
+    },
+    {
+      "parameters": {
+        "url": "http://evaluation-service:8000/api/v1/tickets/prioritized",
+        "options": {}
+      },
+      "id": "http-prioritized-0005",
+      "name": "Ticket prioritizzati",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [880, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://impact-analysis-service:8000/api/v1/analyze",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"ticket_id\": \"{{ $json.id }}\"}",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "id": "http-analyze-0006",
+      "name": "Agente di Planning — analisi impatto",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1100, 0],
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Ogni giorno alle 07:00": {
+      "main": [[{ "node": "Agente Mappatore — aggiorna topologia", "type": "main", "index": 0 }]]
+    },
+    "Agente Mappatore — aggiorna topologia": {
+      "main": [[{ "node": "Importa ticket (aging zero)", "type": "main", "index": 0 }]]
+    },
+    "Importa ticket (aging zero)": {
+      "main": [[{ "node": "Agente Valutatore — triage", "type": "main", "index": 0 }]]
+    },
+    "Agente Valutatore — triage": {
+      "main": [[{ "node": "Ticket prioritizzati", "type": "main", "index": 0 }]]
+    },
+    "Ticket prioritizzati": {
+      "main": [[{ "node": "Agente di Planning — analisi impatto", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

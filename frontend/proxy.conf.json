@@ -1,0 +1,13 @@
+{
+  "/api/auth": { "target": "http://localhost:8001", "pathRewrite": { "^/api/auth": "/api/v1" } },
+  "/api/ingestion": { "target": "http://localhost:8002", "pathRewrite": { "^/api/ingestion": "/api/v1" } },
+  "/api/rag": { "target": "http://localhost:8003", "pathRewrite": { "^/api/rag": "/api/v1" } },
+  "/api/validator": { "target": "http://localhost:8004", "pathRewrite": { "^/api/validator": "/api/v1" } },
+  "/api/evaluation": { "target": "http://localhost:8005", "pathRewrite": { "^/api/evaluation": "/api/v1" } },
+  "/api/impact": { "target": "http://localhost:8006", "pathRewrite": { "^/api/impact": "/api/v1" } },
+  "/api/topology": { "target": "http://localhost:8007", "pathRewrite": { "^/api/topology": "/api/v1" } },
+  "/api/workorders": { "target": "http://localhost:8008", "pathRewrite": { "^/api/workorders": "/api/v1" } },
+  "/api/coding": { "target": "http://localhost:8009", "pathRewrite": { "^/api/coding": "/api/v1" } },
+  "/api/documentation": { "target": "http://localhost:8010", "pathRewrite": { "^/api/documentation": "/api/v1" } },
+  "/api/testing": { "target": "http://localhost:8011", "pathRewrite": { "^/api/testing": "/api/v1" } }
+}

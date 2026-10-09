@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rag-db-manager
+  namespace: sdlc-platform
+  labels:
+    app: rag-db-manager
+    tier: core
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rag-db-manager
+  template:
+    metadata:
+      labels:
+        app: rag-db-manager
+        tier: core
+    spec:
+      containers:
+        - name: rag-db-manager
+          image: sdlc-platform/rag-db-manager:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: platform-config
+            - secretRef:
+                name: platform-secrets
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rag-db-manager
+  namespace: sdlc-platform
+spec:
+  selector:
+    app: rag-db-manager
+  ports:
+    - port: 80
+      targetPort: 8000

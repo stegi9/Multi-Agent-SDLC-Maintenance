@@ -1,0 +1,105 @@
+# Richiede un Ingress Controller (es. ingress-nginx).
+# Instrada il frontend sulla radice e ogni microservizio sotto /api/<servizio>/.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: sdlc-platform
+  namespace: sdlc-platform
+  annotations:
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/rewrite-target: /api/v1/$2
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: sdlc.local
+      http:
+        paths:
+          - path: /api/auth(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: auth-rbac-service
+                port:
+                  number: 80
+          - path: /api/ingestion(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: ingestion-sync-service
+                port:
+                  number: 80
+          - path: /api/rag(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: rag-db-manager
+                port:
+                  number: 80
+          - path: /api/validator(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: document-validator-service
+                port:
+                  number: 80
+          - path: /api/evaluation(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: evaluation-service
+                port:
+                  number: 80
+          - path: /api/impact(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: impact-analysis-service
+                port:
+                  number: 80
+          - path: /api/topology(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: topology-service
+                port:
+                  number: 80
+          - path: /api/workorders(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: wo-generator-service
+                port:
+                  number: 80
+          - path: /api/coding(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: coding-service
+                port:
+                  number: 80
+          - path: /api/documentation(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: documentation-service
+                port:
+                  number: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: sdlc-platform-frontend
+  namespace: sdlc-platform
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: sdlc.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 80

@@ -1,0 +1,30 @@
+# Prometheus: raccoglie le metriche applicative esposte dai microservizi su /metrics.
+global:
+  scrape_interval: 10s
+  evaluation_interval: 10s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ['localhost:9090']
+
+  - job_name: services
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - 'ingestion-sync-service:8000'
+          - 'evaluation-service:8000'
+          - 'impact-analysis-service:8000'
+          - 'wo-generator-service:8000'
+          - 'coding-service:8000'
+          - 'test-runner-service:8000'
+          - 'documentation-service:8000'
+          - 'document-validator-service:8000'
+          - 'topology-service:8000'
+          - 'rag-db-manager:8000'
+          - 'auth-rbac-service:8000'
+    relabel_configs:
+      # etichetta 'service' = nome host del container (senza :porta)
+      - source_labels: [__address__]
+        regex: '([^:]+):.*'
+        target_label: service
